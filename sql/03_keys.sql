@@ -1,4 +1,4 @@
--- шаг 6P | путь P | ключи уже в pipeline — только проверка
+-- шаг 6P | путь P | ключи уже в pipeline - только проверка
 USE ecommerce_sales;
 
 DESCRIBE clean_orders;

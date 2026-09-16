@@ -2,10 +2,9 @@
 
 Пет-проект: e-commerce аналитика от CSV до дашборда Power BI.  
 Датасет: https://www.kaggle.com/datasets/miadul/e-commerce-sales-transactions-dataset  
+Период: **сентябрь 2023 - сентябрь 2025** (хвост сентября 2025 неполный месяц).
 
-Период: **2023–2025** (хвост сентября 2025 — неполный месяц).
-
-Python → MySQL → Power BI. Метрики сверены между слоями.
+Python -> MySQL -> Power BI. Метрики сверены между слоями.
 
 ---
 
@@ -14,59 +13,56 @@ Python → MySQL → Power BI. Метрики сверены между слоя
 | Слой | Что делает |
 |------|------------|
 | **Python** | ETL, ключи, parquet, контрольные метрики |
-| **SQL (MySQL)** | схема, sanity, KPI-запросы |
+| **SQL (MySQL)** | схема, load, sanity, KPI-запросы |
 | **Power BI** | дашборд, 2 страницы |
 
-**Маршрут ABC:-> A**
-- **A — GMV, AOV, region, месяцы** 
-- B — repeat, когорты, LTV 
-- C — маржа, топ товары 
+**Маршрут: продажи (A)**
+- **A - GMV, AOV, region, год x месяц** (+ срез category на дашборде)
+- B - repeat, когорты, LTV (не делаем)
+- C - маржа, топ SKU (не делаем)
 
-**Метрики:** GMV = `SUM(total_amount)`, AOV = GMV / orders.  
-Заказы считаем по **`order_key`** (в SQL и Power BI); в этом датасете `order_key` = `order_id`.
+**Метрики:** GMV = `SUM(total_amount)`, orders = `COUNT(DISTINCT order_key)`, AOV = GMV / orders.  
+В этом датасете `order_key` = `order_id`.
+
+**Зерно:** одна строка = один заказ (**order**). 34 500 строк = 34 500 `order_id`.
 
 ---
 
 ## Данные и ETL
 
-Исходник: **34 500 строк**, 17 колонок, пустых нет. Даты в ISO (`YYYY-MM-DD`).
+Исходник в `data/`:
 
-**Зерно — order** (одна строка = один заказ): 34 500 строк = 34 500 `order_id`.
+| Файл | Роль | строк |
+|------|------|-------|
+| `ecommerce_sales_34500.csv` | факт (заказ) | 34 500 |
 
-**Чистка:**
-- отмен и status в данных нет
-- `total_amount <= 0` — отфильтровано → **34 500** строк clean (все суммы > 0)
-- `order_date` → `datetime`
-- `returned` есть, в маршруте A не используем
+17 колонок, пустых нет. Даты в ISO (`YYYY-MM-DD`).
 
-**Ключи** (в `pipeline.py`):
-- `order_key` = `order_id` (проверка: один customer на order_id — 0 конфликтов)
-- `people` / `customer_key` не строим (`NEED_PEOPLE = False`)
+**Чистка:** отмен и status нет; `total_amount > 0` (отвал 0); `order_date` -> datetime.  
+`returned` в файле есть, в маршруте A не используем.
+
+**Ключи:** `order_key` = `order_id` (один customer на order_id - 0 конфликтов).  
+**people** не строим (`NEED_PEOPLE = False`).
 
 ---
 
-## Главное 
+## Ключевые находки
 
-- Оборот **~5.87M** на **34 500** заказах, средний чек **~170**.
-- Регионы по GMV: **South → North → West → East → Central**.
-- Пик месяца: **декабрь 2024** (~278K). Сентябрь 2025 обрезан — с полными месяцами не сравнивать.
-- По категориям лидер — **Электроника** (~3.3M).
+**Продажи**
+- GMV **5 865 293.05**, заказов **34 500**, AOV **170.01**
+- Регионы по GMV: South (1 298 096) / North (1 264 008) / West (1 186 350) / East (1 176 335) / Central (940 503)
+- Пик месяца: **2024-12** (278 154). Хвост **2025-09** ниже полного месяца - не сравнивать с полными
 
-### Ключевые цифры
+**Категории**
+- Лидер **Electronics** (3 319 207), дальше Home / Sports / Fashion / Beauty
 
-| Метрика | Значение |
-|---------|----------|
-| GMV | 5 865 293 |
-| Orders | 34 500 |
-| AOV | ~170 |
-| Пик месяца | 2024-12 (~278K) |
-| Топ region | South |
-
-Цифры совпадают в `report.py`, SQL (`04_kpi_totals`) и карточках Power BI.
+Цифры совпадают в `scripts/report.py`, SQL (`04`-`06`) и карточках Power BI.
 
 ---
 
 ## Дашборд
+
+Готовый отчёт: [`powerbi/Ecommerce_Dashboard.pbix`](powerbi/Ecommerce_Dashboard.pbix)
 
 | Файл | Страница |
 |------|----------|
@@ -79,54 +75,42 @@ Python → MySQL → Power BI. Метрики сверены между слоя
 ### Regions & Products
 ![Regions & Products](powerbi/screenshots/02_regions_products.png)
 
-Готовый отчёт: `powerbi/Ecommerce_Dashboard.pbix`
-
-- **Overview** — GMV, Orders, AOV + срезы region / Year + GMV по region + динамика по месяцам
-- **Regions & Products** — таблица region (GMV, Orders, AOV, %), доля GMV, GMV по category
+- **Overview** - карточки GMV / Orders / AOV; срезы region / Year; GMV по region; линия по месяцам
+- **Regions & Products** - таблица region (GMV, Orders, AOV, %); доля GMV; GMV по category
 
 ---
 
 ## Pipeline
 
-```text
-data/ecommerce_sales_34500.csv
-        │
-        ├─► scripts/pipeline.py  -  clean + keys → data/processed/*.parquet
-        ├─► scripts/report.py  -  метрики маршрута A, сверка
-        ├─► scripts/load_mysql.py  -  parquet → MySQL (ecommerce_sales)
-        ├─► sql/01_schema.sql … 06  -  sanity, keys, KPI
-        └─► powerbi/  -  дашборд + скрины
-```
 
 | Файл | Назначение |
 |------|------------|
-| `scripts/pipeline.py` | загрузка, типы, чистка, `order_key`, parquet |
+| `scripts/pipeline.py` | load, types, clean, `order_key`, parquet |
 | `scripts/report.py` | GMV / AOV / region / year-month |
-| `scripts/load_mysql.py` | parquet → MySQL |
-| `sql/01_schema.sql` | база `ecommerce_sales`, `clean_orders` |
-| `sql/02_sanity.sql` | проверки после загрузки |
-| `sql/03_keys.sql` | проверка ключей |
-| `sql/04`–`06_kpi_*.sql` | totals, region, year-month |
+| `scripts/load_mysql.py` | parquet -> MySQL |
+| `sql/01_schema.sql` | БД `ecommerce_sales` |
+| `sql/02`-`03` | sanity, keys |
+| `sql/04`-`06` | totals, region, year-month |
 
 ---
 
-## Power BI — модель
+## Power BI - модель
 
-Одна таблица `clean_orders` (Import). Связей нет — `YearMonth` как Date в Power Query для сортировки оси.
+Одна таблица `clean_orders` (Import). Связей нет.  
+Ось месяцев: `YearMonth` как Date в Power Query для сортировки.
 
 ```dax
-GMV = SUM('clean_orders'[total_amount])
-Orders = DISTINCTCOUNT('clean_orders'[order_key])
-AOV = DIVIDE([GMV], [Orders])
-GMV % of Total = DIVIDE([GMV], CALCULATE([GMV], ALLSELECTED('clean_orders')))
+GMV = SUM ( 'clean_orders'[total_amount] )
+Orders = DISTINCTCOUNT ( 'clean_orders'[order_key] )
+AOV = DIVIDE ( [GMV], [Orders] )
+GMV % of Total = DIVIDE ( [GMV], CALCULATE ( [GMV], ALLSELECTED ( 'clean_orders' ) ) )
 ```
 
 ---
 
 ## Стек
 
-Python (pandas, pyarrow) → MySQL 8 → Power BI Desktop (DAX).
-
+Python (pandas, pyarrow) -> MySQL 8 -> Power BI Desktop (DAX).
 
 ---
 
